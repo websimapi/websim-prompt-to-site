@@ -1,6 +1,9 @@
+import { SecurityManager } from './security.js';
+
 // --- State Management ---
 // Websim Socket
 const room = new WebsimSocket();
+const security = new SecurityManager();
 
 const state = {
     projectId: new URLSearchParams(window.location.search).get('project'), // Null if new project
@@ -12,6 +15,18 @@ const state = {
     historyOpen: false,
     projectMenuOpen: false,
     versionUnsubscribe: null,
+    
+    // Settings State
+    settings: {
+        isOpen: false,
+        useOpenRouter: false, // User preference
+        openRouterModel: "anthropic/claude-3.5-sonnet",
+        hasKey: false, // If encrypted key exists in storage
+    },
+    
+    // Temp state for PIN flows
+    pinFlow: null, // 'setup' | 'unlock' | 'change'
+    pendingPrompt: null, // If we intercepted a send
 };
 
 // --- DOM Elements ---
@@ -46,9 +61,47 @@ async function init() {
         toastMsg: document.getElementById('toast-msg'),
         versionBadge: document.getElementById('version-badge'),
         suggestions: document.querySelectorAll('.suggestion-chip'),
+
+        // Settings DOM
+        btnSettings: document.getElementById('btn-settings'),
+        settingsModal: document.getElementById('settings-modal'),
+        closeSettings: document.getElementById('close-settings'),
+        settingsBackdrop: document.getElementById('settings-backdrop'),
+        
+        radioDefault: document.querySelector('input[name="model-select"][value="default"]'),
+        radioOpenRouter: document.querySelector('input[name="model-select"][value="openrouter"]'),
+        openRouterContainer: document.getElementById('openrouter-selection-container'),
+        openRouterModelsWrapper: document.getElementById('openrouter-models-wrapper'),
+        openRouterModelSelect: document.getElementById('openrouter-model-select'),
+        refreshModelsBtn: document.getElementById('refresh-models'),
+        
+        keyStateNone: document.getElementById('key-state-none'),
+        keyStateConfigured: document.getElementById('key-state-configured'),
+        btnAddKey: document.getElementById('btn-add-key'),
+        btnManageKey: document.getElementById('btn-manage-key'),
+        btnRemoveKey: document.getElementById('btn-remove-key'),
+        keyStatusIndicator: document.getElementById('key-status-indicator'),
+        
+        // PIN Modal DOM
+        pinModal: document.getElementById('pin-modal'),
+        pinBackdrop: document.getElementById('pin-backdrop'),
+        pinTitle: document.getElementById('pin-title'),
+        pinSubtitle: document.getElementById('pin-subtitle'),
+        pinSetupFields: document.getElementById('pin-setup-fields'),
+        pinEntryFields: document.getElementById('pin-entry-fields'),
+        inputApiKey: document.getElementById('input-api-key'),
+        inputPinSetup: document.getElementById('input-pin-setup'),
+        inputPinEntry: document.getElementById('input-pin-entry'),
+        btnConfirmPin: document.getElementById('btn-confirm-pin'),
+        btnCancelPin: document.getElementById('btn-cancel-pin'),
+        pinError: document.getElementById('pin-error'),
     };
 
+    // Load persisted settings
+    loadSettings();
+
     setupEventListeners();
+    setupSettingsListeners();
     
     // If we have a projectId in URL, try to load it
     if (state.projectId) {
@@ -137,6 +190,305 @@ function setupEventListeners() {
 
     // Voice Input
     setupVoiceInput();
+    
+    // Security Event Listener
+    window.addEventListener('security-locked', () => {
+        updateSettingsUI();
+        showToast("Session locked due to inactivity");
+    });
+}
+
+function setupSettingsListeners() {
+    // Toggle Settings
+    const toggleSettings = (show) => {
+        state.settings.isOpen = show;
+        if (show) {
+            dom.settingsModal.classList.remove('hidden');
+            updateSettingsUI();
+        } else {
+            dom.settingsModal.classList.add('hidden');
+        }
+    };
+
+    dom.btnSettings.addEventListener('click', () => toggleSettings(true));
+    dom.closeSettings.addEventListener('click', () => toggleSettings(false));
+    dom.settingsBackdrop.addEventListener('click', () => toggleSettings(false));
+
+    // Model Switching
+    dom.radioDefault.addEventListener('change', () => {
+        state.settings.useOpenRouter = false;
+        saveSettings();
+        updateSettingsUI();
+    });
+
+    dom.radioOpenRouter.addEventListener('change', () => {
+        if (!state.settings.hasKey) {
+            // Should not be reachable due to disabled attribute, but safety first
+            dom.radioDefault.checked = true;
+            return;
+        }
+        state.settings.useOpenRouter = true;
+        saveSettings();
+        updateSettingsUI();
+        
+        // Auto-prompt for unlock if needed
+        if (!security.isUnlocked()) {
+            startPinFlow('unlock', "Unlock to Enable OpenRouter");
+        }
+    });
+
+    dom.openRouterModelSelect.addEventListener('change', (e) => {
+        state.settings.openRouterModel = e.target.value;
+        saveSettings();
+    });
+
+    dom.refreshModelsBtn.addEventListener('click', fetchOpenRouterModels);
+
+    // Key Management
+    dom.btnAddKey.addEventListener('click', () => startPinFlow('setup'));
+    dom.btnManageKey.addEventListener('click', () => startPinFlow('setup')); // Re-setup effectively
+    
+    dom.btnRemoveKey.addEventListener('click', () => {
+        if (confirm("Are you sure you want to remove your API key? You will need to re-enter it to use OpenRouter.")) {
+            localStorage.removeItem('openrouter_enc');
+            security.lock();
+            state.settings.hasKey = false;
+            state.settings.useOpenRouter = false;
+            dom.radioDefault.checked = true;
+            saveSettings();
+            updateSettingsUI();
+            showToast("API Key removed");
+        }
+    });
+
+    // PIN Modal Actions
+    dom.btnCancelPin.addEventListener('click', closePinModal);
+    dom.pinBackdrop.addEventListener('click', closePinModal);
+    
+    dom.btnConfirmPin.addEventListener('click', handlePinConfirm);
+    
+    // Enter key in PIN inputs
+    const handleEnter = (e) => {
+        if (e.key === 'Enter') handlePinConfirm();
+    };
+    dom.inputPinEntry.addEventListener('keydown', handleEnter);
+    dom.inputPinSetup.addEventListener('keydown', handleEnter);
+    dom.inputApiKey.addEventListener('keydown', handleEnter);
+}
+
+// --- Settings Logic ---
+
+function loadSettings() {
+    const stored = JSON.parse(localStorage.getItem('app_settings') || '{}');
+    state.settings.useOpenRouter = stored.useOpenRouter || false;
+    state.settings.openRouterModel = stored.openRouterModel || "anthropic/claude-3.5-sonnet";
+    
+    const encData = localStorage.getItem('openrouter_enc');
+    state.settings.hasKey = !!encData;
+    
+    // Safety fallback
+    if (state.settings.useOpenRouter && !state.settings.hasKey) {
+        state.settings.useOpenRouter = false;
+    }
+}
+
+function saveSettings() {
+    localStorage.setItem('app_settings', JSON.stringify({
+        useOpenRouter: state.settings.useOpenRouter,
+        openRouterModel: state.settings.openRouterModel
+    }));
+}
+
+function updateSettingsUI() {
+    // Model Selection UI
+    if (state.settings.useOpenRouter) {
+        dom.radioOpenRouter.checked = true;
+        dom.openRouterModelsWrapper.classList.remove('hidden');
+    } else {
+        dom.radioDefault.checked = true;
+        dom.openRouterModelsWrapper.classList.add('hidden');
+    }
+    
+    // Enable/Disable OpenRouter Option based on Key existence
+    if (state.settings.hasKey) {
+        dom.radioOpenRouter.disabled = false;
+        dom.openRouterContainer.classList.remove('opacity-50', 'pointer-events-none');
+        dom.keyStateNone.classList.add('hidden');
+        dom.keyStateConfigured.classList.remove('hidden');
+        
+        // Update Lock Status
+        const isUnlocked = security.isUnlocked();
+        dom.keyStatusIndicator.innerHTML = isUnlocked 
+            ? '<i class="fa-solid fa-lock-open text-[10px]"></i> Unlocked'
+            : '<i class="fa-solid fa-lock text-[10px]"></i> Locked';
+        dom.keyStatusIndicator.className = `text-xs px-2 py-0.5 rounded border flex items-center gap-1 ${isUnlocked ? 'bg-green-900/20 text-green-400 border-green-900/30' : 'bg-gray-800 text-gray-400 border-gray-700'}`;
+        
+        if (isUnlocked && dom.openRouterModelSelect.children.length <= 4) {
+            // Try to fetch models if we haven't already populated fully
+            fetchOpenRouterModels();
+        }
+
+    } else {
+        dom.radioOpenRouter.disabled = true;
+        dom.openRouterContainer.classList.add('opacity-50', 'pointer-events-none');
+        dom.keyStateNone.classList.remove('hidden');
+        dom.keyStateConfigured.classList.add('hidden');
+    }
+
+    // Set dropdown value
+    dom.openRouterModelSelect.value = state.settings.openRouterModel;
+}
+
+// --- PIN & Security Flow ---
+
+function startPinFlow(mode, customTitle) {
+    state.pinFlow = mode;
+    dom.pinModal.classList.remove('hidden');
+    dom.pinError.classList.add('hidden');
+    dom.inputPinEntry.value = '';
+    dom.inputPinSetup.value = '';
+    dom.inputApiKey.value = '';
+
+    if (mode === 'setup') {
+        dom.pinTitle.textContent = "Configure Security";
+        dom.pinSubtitle.textContent = "Set a PIN to encrypt your API key locally";
+        dom.pinSetupFields.classList.remove('hidden');
+        dom.pinEntryFields.classList.add('hidden');
+        dom.inputApiKey.focus();
+    } else {
+        dom.pinTitle.textContent = customTitle || "Enter PIN";
+        dom.pinSubtitle.textContent = "Unlock your API key to continue";
+        dom.pinSetupFields.classList.add('hidden');
+        dom.pinEntryFields.classList.remove('hidden');
+        dom.inputPinEntry.focus();
+    }
+}
+
+function closePinModal() {
+    dom.pinModal.classList.add('hidden');
+    state.pinFlow = null;
+    // If we were pending a prompt and canceled, cancel the generation
+    if (state.pendingPrompt) {
+        state.pendingPrompt = null;
+        setLoading(false);
+        updateSendButtonState();
+    }
+}
+
+async function handlePinConfirm() {
+    dom.pinError.classList.add('hidden');
+    
+    if (state.pinFlow === 'setup') {
+        const apiKey = dom.inputApiKey.value.trim();
+        const pin = dom.inputPinSetup.value.trim();
+        
+        if (!apiKey.startsWith('sk-or-')) {
+            showPinError("Invalid OpenRouter Key (should start with sk-or-)");
+            return;
+        }
+        if (pin.length < 4) {
+            showPinError("PIN must be at least 4 digits");
+            return;
+        }
+
+        try {
+            const encryptedData = await security.encrypt(apiKey, pin);
+            localStorage.setItem('openrouter_enc', JSON.stringify(encryptedData));
+            
+            state.settings.hasKey = true;
+            state.settings.useOpenRouter = true; // Auto-select on setup
+            saveSettings();
+            updateSettingsUI();
+            closePinModal();
+            showToast("API Key encrypted and saved");
+            
+            // Initial fetch of models
+            fetchOpenRouterModels();
+            
+        } catch (e) {
+            console.error(e);
+            showPinError("Encryption failed");
+        }
+
+    } else if (state.pinFlow === 'unlock') {
+        const pin = dom.inputPinEntry.value.trim();
+        const encDataStr = localStorage.getItem('openrouter_enc');
+        
+        if (!encDataStr) {
+            closePinModal();
+            showToast("No key found");
+            return;
+        }
+
+        try {
+            const success = await security.decrypt(JSON.parse(encDataStr), pin);
+            if (success) {
+                closePinModal();
+                updateSettingsUI();
+                showToast("Unlocked successfully");
+                
+                // Resume pending action if any
+                if (state.pendingPrompt) {
+                    const prompt = state.pendingPrompt;
+                    state.pendingPrompt = null;
+                    // Re-trigger handleSend logic, but bypass the check since we are unlocked
+                    handleSend(true); // pass flag to indicate retry
+                }
+            } else {
+                showPinError("Incorrect PIN");
+                dom.inputPinEntry.value = '';
+            }
+        } catch (e) {
+            showPinError("Decryption error");
+        }
+    }
+}
+
+function showPinError(msg) {
+    dom.pinError.textContent = msg;
+    dom.pinError.classList.remove('hidden');
+}
+
+async function fetchOpenRouterModels() {
+    const key = security.getKey();
+    if (!key) return; // Silent fail if locked, user will refresh later
+    
+    const btnContent = dom.refreshModelsBtn.innerHTML;
+    dom.refreshModelsBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Loading...';
+    
+    try {
+        const response = await fetch("https://openrouter.ai/api/v1/models", {
+            headers: {
+                "Authorization": `Bearer ${key}`
+            }
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            const models = data.data.sort((a,b) => a.name.localeCompare(b.name));
+            
+            // Keep default/popular ones at top
+            const defaults = ["anthropic/claude-3.5-sonnet", "openai/gpt-4o", "meta-llama/llama-3.1-70b-instruct"];
+            
+            // Clear existing except defaults
+            dom.openRouterModelSelect.innerHTML = '<option value="" disabled>Select a model...</option>';
+            
+            // Add defaults back if they exist in list (or just add them)
+            // Actually, let's just dump the fetched list but prioritize some
+            
+            models.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m.id;
+                opt.textContent = m.name;
+                if (m.id === state.settings.openRouterModel) opt.selected = true;
+                dom.openRouterModelSelect.appendChild(opt);
+            });
+        }
+    } catch (e) {
+        console.error("Failed to fetch models", e);
+    } finally {
+        dom.refreshModelsBtn.innerHTML = btnContent;
+    }
 }
 
 function resetToNewProject() {
@@ -235,9 +587,21 @@ function updateSendButtonState() {
 
 // --- Core Logic ---
 
-async function handleSend() {
-    const prompt = dom.input.value.trim();
-    if (!prompt || state.isGenerating) return;
+async function handleSend(isRetry = false) {
+    // If this is a retry from PIN unlock, use pending prompt or input
+    const prompt = isRetry && state.pendingPrompt ? state.pendingPrompt : dom.input.value.trim();
+    
+    // Check Prompt
+    if (!prompt) return;
+    
+    // Check Lock State for OpenRouter
+    if (state.settings.useOpenRouter && !security.isUnlocked()) {
+        state.pendingPrompt = prompt;
+        startPinFlow('unlock', "Unlock OpenRouter to Generate");
+        return;
+    }
+
+    if (state.isGenerating) return;
 
     setLoading(true, state.projectId ? "Refining project..." : "Architecting new project...");
     
@@ -271,6 +635,9 @@ async function handleSend() {
         const result = await generateProject(prompt, currentFiles);
         
         if (result) {
+            // Clear pending prompt if we succeeded
+            state.pendingPrompt = null;
+
             // Create Version Record
             await room.collection('version').create({
                 project_id: state.projectId,
@@ -410,16 +777,48 @@ USER PROMPT: ${prompt}
     }
 
     try {
-        const completion = await websim.chat.completions.create({
-            messages: messages,
-            json: true
-        });
-
-        return JSON.parse(completion.content);
+        if (state.settings.useOpenRouter) {
+            return await generateWithOpenRouter(messages);
+        } else {
+            const completion = await websim.chat.completions.create({
+                messages: messages,
+                json: true
+            });
+            return JSON.parse(completion.content);
+        }
     } catch (e) {
         console.error("AI Error:", e);
         throw e;
     }
+}
+
+async function generateWithOpenRouter(messages) {
+    const key = security.getKey();
+    if (!key) throw new Error("OpenRouter Key Locked or Missing");
+
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${key}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": window.location.origin,
+            "X-Title": "Prompt-to-Site Builder"
+        },
+        body: JSON.stringify({
+            model: state.settings.openRouterModel,
+            messages: messages,
+            response_format: { type: "json_object" }
+        })
+    });
+
+    if (!response.ok) {
+        const err = await response.json();
+        throw new Error(`OpenRouter Error: ${err.error?.message || response.statusText}`);
+    }
+
+    const data = await response.json();
+    const content = data.choices[0].message.content;
+    return JSON.parse(content);
 }
 
 // generateRandomProject removed/integrated into logic
