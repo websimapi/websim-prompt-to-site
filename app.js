@@ -153,7 +153,7 @@ function resetToNewProject() {
     dom.currentProjectName.textContent = state.projectName;
     dom.welcomeScreen.classList.remove('hidden');
     dom.preview.srcdoc = ''; // Clear iframe
-    dom.versionBadge.classList.add('hidden');
+    updateHistoryUI(); // Ensure history UI is cleared
     
     // Clean URL
     const url = new URL(window.location);
@@ -187,6 +187,10 @@ async function loadProject(id) {
     // Subscribe to versions
     if (state.versionUnsubscribe) state.versionUnsubscribe();
     
+    // Clear versions locally immediately to prevent bleeding from previous project
+    state.versions = [];
+    updateHistoryUI();
+
     state.versionUnsubscribe = room.collection('version').filter({ project_id: id }).subscribe((records) => {
         // Capture if we were at the latest version before update
         const wasAtTip = state.currentVersionIndex === -1 || (state.versions.length > 0 && state.currentVersionIndex === state.versions.length - 1);
@@ -480,9 +484,22 @@ function toggleHistory() {
 function updateHistoryUI() {
     dom.historyList.innerHTML = '';
     
-    // Update badge
+    // Update badge visibility
     if (state.versions.length > 0) {
         dom.versionBadge.classList.remove('hidden');
+    } else {
+        dom.versionBadge.classList.add('hidden');
+    }
+
+    // Empty state
+    if (state.versions.length === 0) {
+        dom.historyList.innerHTML = `
+            <div class="flex flex-col items-center justify-center h-32 text-gray-500 space-y-2 opacity-50 select-none">
+                <i class="fa-solid fa-code-branch text-3xl"></i>
+                <p class="text-xs font-medium">No version history</p>
+            </div>
+        `;
+        return;
     }
 
     // Reverse loop to show newest first
