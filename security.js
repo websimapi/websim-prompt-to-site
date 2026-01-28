@@ -147,3 +147,5 @@ export class SecurityManager {
         return bytes.buffer;
     }
 }
+
+export const security = new SecurityManager();
