@@ -109,7 +109,8 @@ function setupEventListeners() {
     dom.closeHistory.addEventListener('click', toggleHistory);
     
     // Close history if clicking outside (on the overlay part if we added one, or just the top handle)
-    document.getElementById('history-handle').addEventListener('click', toggleHistory);
+    const historyHandle = document.getElementById('history-handle');
+    if (historyHandle) historyHandle.addEventListener('click', toggleHistory);
 
     // Random Project
     dom.btnRandom.addEventListener('click', generateRandomProject);
