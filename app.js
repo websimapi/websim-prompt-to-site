@@ -1,13 +1,24 @@
 import { escape } from 'https://esm.sh/lodash-es@4.17.21';
 
 // --- State Management ---
+// Websim Socket
+const room = new WebsimSocket();
+
 const state = {
-    projectId: crypto.randomUUID(),
-    versions: [], // Array of { id, prompt, files, timestamp }
+    projectId: new URLSearchParams(window.location.search).get('project') || localStorage.getItem('last_project_id') || crypto.randomUUID(),
+    versions: [], 
     currentVersionIndex: -1,
     isGenerating: false,
     historyOpen: false,
 };
+
+// Persist Project ID
+localStorage.setItem('last_project_id', state.projectId);
+const url = new URL(window.location);
+if (!url.searchParams.has('project')) {
+    url.searchParams.set('project', state.projectId);
+    window.history.replaceState({}, '', url);
+}
 
 // --- DOM Elements ---
 const dom = {
@@ -34,6 +45,35 @@ function init() {
     setupEventListeners();
     checkUrlParams();
     dom.input.focus();
+    
+    // Subscribe to versions
+    room.collection('version').filter({ project_id: state.projectId }).subscribe((records) => {
+        const wasAtTip = state.currentVersionIndex === -1 || state.currentVersionIndex === state.versions.length - 1;
+        
+        // Parse records (Websim returns newest first)
+        state.versions = records.reverse().map(r => ({
+            id: r.id,
+            prompt: r.prompt,
+            files: JSON.parse(r.files),
+            timestamp: new Date(r.created_at),
+            description: r.description
+        }));
+
+        // Auto-switch to new version if user was at the tip
+        if (wasAtTip && state.versions.length > 0) {
+            state.currentVersionIndex = state.versions.length - 1;
+            renderProject(getCurrentFiles());
+        }
+        
+        // First load handling
+        if (state.currentVersionIndex === -1 && state.versions.length > 0) {
+             state.currentVersionIndex = state.versions.length - 1;
+             renderProject(getCurrentFiles());
+             dom.welcomeScreen.classList.add('hidden');
+        }
+
+        updateHistoryUI();
+    });
 }
 
 function setupEventListeners() {
@@ -99,34 +139,22 @@ async function handleSend() {
         const result = await generateProject(prompt, currentFiles);
         
         if (result) {
-            // Create Commit
-            const newVersion = {
-                id: crypto.randomUUID().substring(0, 7),
+            // Create Record in DB
+            await room.collection('version').create({
+                project_id: state.projectId,
                 prompt: prompt,
-                files: result.files,
-                timestamp: new Date(),
-                description: result.description || "Updated project"
-            };
-
-            // Branching Logic: If we are not at the tip, we are forking/branching effectively.
-            // For simplicity in this demo, we just append to a linear history, deleting future if any (rewrite history style)
-            // or we could implement tree structure. Let's do linear truncate for simplicity in UX.
-            if (state.currentVersionIndex < state.versions.length - 1) {
-                state.versions = state.versions.slice(0, state.currentVersionIndex + 1);
-            }
-
-            state.versions.push(newVersion);
-            state.currentVersionIndex = state.versions.length - 1;
-
-            // Render
-            renderProject(newVersion.files);
+                files: JSON.stringify(result.files),
+                description: result.description || "Updated project",
+            });
+            
+            // Trigger load for next render via subscription
+            state.currentVersionIndex = state.versions.length;
             
             // UI Cleanup
             dom.input.value = '';
             dom.input.style.height = 'auto';
             dom.welcomeScreen.classList.add('hidden');
-            updateHistoryUI();
-            showToast(`Version ${newVersion.id} created`);
+            showToast(`Generating version...`);
         }
     } catch (error) {
         console.error(error);
@@ -257,11 +285,15 @@ function renderProject(files) {
 
 function toggleHistory() {
     state.historyOpen = !state.historyOpen;
+    const p = dom.historyPanel;
+    
     if (state.historyOpen) {
-        dom.historyPanel.classList.remove('translate-y-full');
+        p.classList.remove('opacity-0', 'translate-y-4', 'scale-95', 'pointer-events-none');
+        p.classList.add('opacity-100', 'translate-y-0', 'scale-100', 'pointer-events-auto');
         updateHistoryUI();
     } else {
-        dom.historyPanel.classList.add('translate-y-full');
+        p.classList.add('opacity-0', 'translate-y-4', 'scale-95', 'pointer-events-none');
+        p.classList.remove('opacity-100', 'translate-y-0', 'scale-100', 'pointer-events-auto');
     }
 }
 
@@ -282,7 +314,7 @@ function updateHistoryUI() {
         el.className = `p-3 rounded-lg border cursor-pointer transition-all ${isActive ? 'bg-blue-900/30 border-blue-500' : 'bg-gray-800 border-gray-700 hover:bg-gray-750'}`;
         el.innerHTML = `
             <div class="flex justify-between items-start mb-1">
-                <span class="text-xs font-mono text-gray-500">#${ver.id}</span>
+                <span class="text-xs font-mono text-gray-500">#${ver.id.substring(0,8)}</span>
                 <span class="text-xs text-gray-400">${ver.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
             </div>
             <div class="font-medium text-sm text-gray-200 mb-1 line-clamp-2">${ver.prompt}</div>

@@ -43,16 +43,20 @@
     100% { transform: rotate(360deg); }
 }
 
-/* Hide Scrollbar for History but keep functionality */
-#history-list::-webkit-scrollbar {
-    width: 4px;
+/* Custom Scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
 }
-#history-list::-webkit-scrollbar-track {
-    background: #1f2937;
+.custom-scrollbar::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 3px;
 }
-#history-list::-webkit-scrollbar-thumb {
-    background: #4b5563;
-    border-radius: 4px;
+.custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
 }
 
 /* Markdown-like styling for commit messages */
