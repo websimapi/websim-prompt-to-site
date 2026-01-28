@@ -21,37 +21,42 @@ if (!url.searchParams.has('project')) {
 }
 
 // --- DOM Elements ---
-const dom = {
-    preview: document.getElementById('site-preview'),
-    input: document.getElementById('prompt-input'),
-    btnSend: document.getElementById('btn-send'),
-    btnHistory: document.getElementById('btn-history'),
-    btnRandom: document.getElementById('btn-random'),
-    btnMic: document.getElementById('btn-mic'),
-    historyPanel: document.getElementById('history-panel'),
-    historyList: document.getElementById('history-list'),
-    closeHistory: document.getElementById('close-history'),
-    welcomeScreen: document.getElementById('welcome-screen'),
-    loadingOverlay: document.getElementById('loading-overlay'),
-    loadingText: document.getElementById('loading-text'),
-    toast: document.getElementById('toast'),
-    toastMsg: document.getElementById('toast-msg'),
-    versionBadge: document.getElementById('version-badge'),
-    suggestions: document.querySelectorAll('.suggestion-chip'),
-};
+let dom = {};
 
 // --- Initialization ---
 function init() {
+    // Initialize DOM references safely after load
+    dom = {
+        preview: document.getElementById('site-preview'),
+        input: document.getElementById('prompt-input'),
+        btnSend: document.getElementById('btn-send'),
+        btnHistory: document.getElementById('btn-history'),
+        btnRandom: document.getElementById('btn-random'),
+        btnMic: document.getElementById('btn-mic'),
+        historyPanel: document.getElementById('history-panel'),
+        historyList: document.getElementById('history-list'),
+        closeHistory: document.getElementById('close-history'),
+        welcomeScreen: document.getElementById('welcome-screen'),
+        loadingOverlay: document.getElementById('loading-overlay'),
+        loadingText: document.getElementById('loading-text'),
+        toast: document.getElementById('toast'),
+        toastMsg: document.getElementById('toast-msg'),
+        versionBadge: document.getElementById('version-badge'),
+        suggestions: document.querySelectorAll('.suggestion-chip'),
+    };
+
     setupEventListeners();
     checkUrlParams();
-    dom.input.focus();
+    if (dom.input) dom.input.focus();
     
     // Subscribe to versions
     room.collection('version').filter({ project_id: state.projectId }).subscribe((records) => {
-        const wasAtTip = state.currentVersionIndex === -1 || state.currentVersionIndex === state.versions.length - 1;
+        // Capture if we were at the latest version before update
+        // We are at the tip if index is -1 (start) or matches the last index of current versions
+        const wasAtTip = state.currentVersionIndex === -1 || (state.versions.length > 0 && state.currentVersionIndex === state.versions.length - 1);
         
         // Parse records (Websim returns newest first)
-        state.versions = records.reverse().map(r => ({
+        const newVersions = records.reverse().map(r => ({
             id: r.id,
             prompt: r.prompt,
             files: JSON.parse(r.files),
@@ -59,13 +64,16 @@ function init() {
             description: r.description
         }));
 
+        state.versions = newVersions;
+
         // Auto-switch to new version if user was at the tip
+        // This handles the case where we just created a new version
         if (wasAtTip && state.versions.length > 0) {
             state.currentVersionIndex = state.versions.length - 1;
             renderProject(getCurrentFiles());
         }
         
-        // First load handling
+        // First load handling / recovery
         if (state.currentVersionIndex === -1 && state.versions.length > 0) {
              state.currentVersionIndex = state.versions.length - 1;
              renderProject(getCurrentFiles());
@@ -141,6 +149,8 @@ async function handleSend() {
         
         if (result) {
             // Create Record in DB
+            // We do NOT update state.currentVersionIndex here manually.
+            // We let the realtime subscription handle the UI update when the data arrives.
             await room.collection('version').create({
                 project_id: state.projectId,
                 prompt: prompt,
@@ -148,14 +158,11 @@ async function handleSend() {
                 description: result.description || "Updated project",
             });
             
-            // Trigger load for next render via subscription
-            state.currentVersionIndex = state.versions.length;
-            
             // UI Cleanup
             dom.input.value = '';
             dom.input.style.height = 'auto';
             dom.welcomeScreen.classList.add('hidden');
-            showToast(`Generating version...`);
+            showToast(`Version generated! Loading...`);
         }
     } catch (error) {
         console.error(error);
@@ -168,6 +175,10 @@ async function handleSend() {
 
 function getCurrentFiles() {
     if (state.currentVersionIndex === -1) return null;
+    if (!state.versions[state.currentVersionIndex]) {
+        console.warn(`Version index ${state.currentVersionIndex} out of bounds (length: ${state.versions.length})`);
+        return null;
+    }
     return state.versions[state.currentVersionIndex].files;
 }
 
@@ -287,14 +298,28 @@ function renderProject(files) {
 function toggleHistory() {
     state.historyOpen = !state.historyOpen;
     const p = dom.historyPanel;
+    const inputBar = document.getElementById('input-bar');
     
     if (state.historyOpen) {
-        p.classList.remove('opacity-0', 'translate-y-4', 'scale-95', 'pointer-events-none');
-        p.classList.add('opacity-100', 'translate-y-0', 'scale-100', 'pointer-events-auto');
+        p.classList.remove('opacity-0', 'translate-y-full', 'pointer-events-none');
+        p.classList.add('opacity-100', 'translate-y-0', 'pointer-events-auto');
+        
+        // Square off bottom corners of history panel to join with input
+        // Square off top corners of input bar to join with history
+        if (inputBar) {
+            inputBar.classList.remove('rounded-2xl');
+            inputBar.classList.add('rounded-b-2xl', 'rounded-t-sm');
+        }
+        
         updateHistoryUI();
     } else {
-        p.classList.add('opacity-0', 'translate-y-4', 'scale-95', 'pointer-events-none');
-        p.classList.remove('opacity-100', 'translate-y-0', 'scale-100', 'pointer-events-auto');
+        p.classList.add('opacity-0', 'translate-y-full', 'pointer-events-none');
+        p.classList.remove('opacity-100', 'translate-y-0', 'pointer-events-auto');
+        
+        if (inputBar) {
+            inputBar.classList.add('rounded-2xl');
+            inputBar.classList.remove('rounded-b-2xl', 'rounded-t-sm');
+        }
     }
 }
 
