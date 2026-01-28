@@ -64,17 +64,37 @@
             </div>
 
             <!-- Main Input Bar -->
-            <div class="bg-gray-800/90 backdrop-blur-lg border border-gray-700 rounded-2xl shadow-2xl p-2 flex items-end gap-2 relative overflow-hidden ring-1 ring-white/10 z-10 transition-all duration-300" id="input-bar">
+            <div class="bg-gray-800/90 backdrop-blur-lg border border-gray-700 rounded-2xl shadow-2xl p-2 flex items-end gap-2 relative overflow-visible ring-1 ring-white/10 z-10 transition-all duration-300" id="input-bar">
                 
+                <!-- Project Menu Popover -->
+                <div id="project-menu" class="absolute bottom-full left-0 mb-3 ml-2 w-64 bg-gray-900/95 backdrop-blur-xl border border-gray-700 rounded-xl shadow-2xl transform origin-bottom-left transition-all duration-200 opacity-0 pointer-events-none translate-y-2 z-50 flex flex-col">
+                    <div class="p-2 border-b border-gray-700/50">
+                        <input id="project-search" type="text" placeholder="Search projects..." class="w-full bg-gray-800 text-gray-200 text-xs p-2 rounded-lg border border-gray-700 focus:border-blue-500 focus:outline-none placeholder-gray-500">
+                    </div>
+                    <div id="project-list" class="max-h-60 overflow-y-auto p-1 custom-scrollbar space-y-0.5">
+                        <!-- Projects injected here -->
+                    </div>
+                </div>
+
                 <!-- Utilities (Left) -->
-                <div class="flex flex-col gap-1 pb-1">
-                    <button id="btn-history" class="w-10 h-10 rounded-xl hover:bg-gray-700 text-gray-400 hover:text-white transition-colors flex items-center justify-center relative">
-                        <i class="fa-solid fa-code-branch"></i>
-                        <span id="version-badge" class="absolute top-1 right-1 w-2.5 h-2.5 bg-blue-500 rounded-full hidden"></span>
-                    </button>
-                    <button id="btn-random" class="w-10 h-10 rounded-xl hover:bg-gray-700 text-gray-400 hover:text-purple-400 transition-colors flex items-center justify-center">
-                        <i class="fa-solid fa-dice"></i>
-                    </button>
+                <div class="flex flex-col gap-2 pb-1 pr-1">
+                    <div class="flex items-center gap-2">
+                         <button id="btn-history" class="w-10 h-10 rounded-xl hover:bg-gray-700 text-gray-400 hover:text-white transition-colors flex items-center justify-center relative shrink-0">
+                            <i class="fa-solid fa-code-branch"></i>
+                            <span id="version-badge" class="absolute top-1 right-1 w-2.5 h-2.5 bg-blue-500 rounded-full hidden"></span>
+                        </button>
+
+                        <div class="flex items-center bg-gray-900/60 rounded-xl border border-gray-700/50 p-1 h-10">
+                            <button id="btn-project-label" class="px-3 h-full flex items-center gap-2 text-xs font-medium text-gray-300 hover:text-white transition-colors max-w-[100px] sm:max-w-[140px] rounded hover:bg-white/5">
+                                <span id="current-project-name" class="truncate">New Project</span>
+                                <i class="fa-solid fa-chevron-down text-[10px] opacity-50"></i>
+                            </button>
+                            <div class="w-px h-4 bg-gray-700 mx-1"></div>
+                            <button id="btn-new-project" class="w-7 h-full flex items-center justify-center rounded hover:bg-white/10 text-gray-400 hover:text-white transition-colors" title="New Project">
+                                <i class="fa-solid fa-plus text-xs"></i>
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Input Area -->

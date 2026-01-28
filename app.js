@@ -5,34 +5,38 @@ import { escape } from 'https://esm.sh/lodash-es@4.17.21';
 const room = new WebsimSocket();
 
 const state = {
-    projectId: new URLSearchParams(window.location.search).get('project') || localStorage.getItem('last_project_id') || crypto.randomUUID(),
+    projectId: new URLSearchParams(window.location.search).get('project'), // Null if new project
+    projectName: "New Project",
     versions: [], 
+    projects: [],
     currentVersionIndex: -1,
     isGenerating: false,
     historyOpen: false,
+    projectMenuOpen: false,
+    versionUnsubscribe: null,
 };
-
-// Persist Project ID
-localStorage.setItem('last_project_id', state.projectId);
-const url = new URL(window.location);
-if (!url.searchParams.has('project')) {
-    url.searchParams.set('project', state.projectId);
-    window.history.replaceState({}, '', url);
-}
 
 // --- DOM Elements ---
 let dom = {};
 
 // --- Initialization ---
-function init() {
+async function init() {
     // Initialize DOM references safely after load
     dom = {
         preview: document.getElementById('site-preview'),
         input: document.getElementById('prompt-input'),
         btnSend: document.getElementById('btn-send'),
         btnHistory: document.getElementById('btn-history'),
-        btnRandom: document.getElementById('btn-random'),
         btnMic: document.getElementById('btn-mic'),
+        
+        // Project Controls
+        btnProjectLabel: document.getElementById('btn-project-label'),
+        btnNewProject: document.getElementById('btn-new-project'),
+        currentProjectName: document.getElementById('current-project-name'),
+        projectMenu: document.getElementById('project-menu'),
+        projectList: document.getElementById('project-list'),
+        projectSearch: document.getElementById('project-search'),
+        
         historyPanel: document.getElementById('history-panel'),
         historyList: document.getElementById('history-list'),
         closeHistory: document.getElementById('close-history'),
@@ -46,42 +50,31 @@ function init() {
     };
 
     setupEventListeners();
-    checkUrlParams();
-    if (dom.input) dom.input.focus();
     
-    // Subscribe to versions
-    room.collection('version').filter({ project_id: state.projectId }).subscribe((records) => {
-        // Capture if we were at the latest version before update
-        // We are at the tip if index is -1 (start) or matches the last index of current versions
-        const wasAtTip = state.currentVersionIndex === -1 || (state.versions.length > 0 && state.currentVersionIndex === state.versions.length - 1);
+    // If we have a projectId in URL, try to load it
+    if (state.projectId) {
+        await loadProject(state.projectId);
+    } else {
+        // Ensure "New Project" state
+        resetToNewProject();
+    }
+    
+    // Subscribe to project list (global)
+    room.collection('project').subscribe(projects => {
+        state.projects = projects.sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+        renderProjectList();
         
-        // Parse records (Websim returns newest first)
-        const newVersions = records.reverse().map(r => ({
-            id: r.id,
-            prompt: r.prompt,
-            files: JSON.parse(r.files),
-            timestamp: new Date(r.created_at),
-            description: r.description
-        }));
-
-        state.versions = newVersions;
-
-        // Auto-switch to new version if user was at the tip
-        // This handles the case where we just created a new version
-        if (wasAtTip && state.versions.length > 0) {
-            state.currentVersionIndex = state.versions.length - 1;
-            renderProject(getCurrentFiles());
+        // Update current project name if it changed externally
+        if (state.projectId) {
+            const current = state.projects.find(p => p.id === state.projectId);
+            if (current) {
+                state.projectName = current.name;
+                dom.currentProjectName.textContent = state.projectName;
+            }
         }
-        
-        // First load handling / recovery
-        if (state.currentVersionIndex === -1 && state.versions.length > 0) {
-             state.currentVersionIndex = state.versions.length - 1;
-             renderProject(getCurrentFiles());
-             dom.welcomeScreen.classList.add('hidden');
-        }
-
-        updateHistoryUI();
     });
+
+    if (dom.input) dom.input.focus();
 }
 
 function setupEventListeners() {
@@ -116,15 +109,114 @@ function setupEventListeners() {
     dom.btnHistory.addEventListener('click', toggleHistory);
     dom.closeHistory.addEventListener('click', toggleHistory);
     
-    // Close history if clicking outside (on the overlay part if we added one, or just the top handle)
     const historyHandle = document.getElementById('history-handle');
     if (historyHandle) historyHandle.addEventListener('click', toggleHistory);
 
-    // Random Project
-    dom.btnRandom.addEventListener('click', generateRandomProject);
+    // Project Controls
+    dom.btnProjectLabel.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleProjectMenu();
+    });
+    
+    dom.btnNewProject.addEventListener('click', () => {
+        resetToNewProject();
+        showToast("Started new project");
+    });
+
+    dom.projectSearch.addEventListener('input', (e) => {
+        renderProjectList(e.target.value);
+    });
+
+    // Click outside handler for Project Menu
+    document.addEventListener('click', (e) => {
+        if (state.projectMenuOpen && !dom.projectMenu.contains(e.target) && !dom.btnProjectLabel.contains(e.target)) {
+            toggleProjectMenu(false);
+        }
+    });
 
     // Voice Input
     setupVoiceInput();
+}
+
+function resetToNewProject() {
+    state.projectId = null;
+    state.projectName = "New Project";
+    state.versions = [];
+    state.currentVersionIndex = -1;
+    
+    if (state.versionUnsubscribe) {
+        state.versionUnsubscribe();
+        state.versionUnsubscribe = null;
+    }
+
+    // UI Updates
+    dom.currentProjectName.textContent = state.projectName;
+    dom.welcomeScreen.classList.remove('hidden');
+    dom.preview.srcdoc = ''; // Clear iframe
+    dom.versionBadge.classList.add('hidden');
+    
+    // Clean URL
+    const url = new URL(window.location);
+    url.searchParams.delete('project');
+    window.history.replaceState({}, '', url);
+
+    // Close menus
+    if (state.historyOpen) toggleHistory();
+    if (state.projectMenuOpen) toggleProjectMenu(false);
+}
+
+async function loadProject(id) {
+    state.projectId = id;
+    localStorage.setItem('last_project_id', id);
+    
+    // Find name if possible (or fetch logic if we were using a dedicated fetch, but subscribe handles it)
+    const p = state.projects.find(proj => proj.id === id);
+    if (p) {
+        state.projectName = p.name;
+    } else {
+        // Fallback or loading state name
+        // We might not have loaded projects yet, so we'll let the subscription update the name
+    }
+    dom.currentProjectName.textContent = state.projectName;
+
+    // URL Update
+    const url = new URL(window.location);
+    url.searchParams.set('project', id);
+    window.history.replaceState({}, '', url);
+
+    // Subscribe to versions
+    if (state.versionUnsubscribe) state.versionUnsubscribe();
+    
+    state.versionUnsubscribe = room.collection('version').filter({ project_id: id }).subscribe((records) => {
+        // Capture if we were at the latest version before update
+        const wasAtTip = state.currentVersionIndex === -1 || (state.versions.length > 0 && state.currentVersionIndex === state.versions.length - 1);
+        
+        const newVersions = records.reverse().map(r => ({
+            id: r.id,
+            prompt: r.prompt,
+            files: JSON.parse(r.files),
+            timestamp: new Date(r.created_at),
+            description: r.description
+        }));
+
+        state.versions = newVersions;
+
+        // Auto-switch to new version logic
+        if (wasAtTip && state.versions.length > 0) {
+            state.currentVersionIndex = state.versions.length - 1;
+            renderProject(getCurrentFiles());
+        } else if (state.currentVersionIndex === -1 && state.versions.length > 0) {
+             // Initial load
+             state.currentVersionIndex = state.versions.length - 1;
+             renderProject(getCurrentFiles());
+             dom.welcomeScreen.classList.add('hidden');
+        }
+
+        updateHistoryUI();
+    });
+
+    // Close menu if open
+    toggleProjectMenu(false);
 }
 
 function updateSendButtonState() {
@@ -138,9 +230,31 @@ async function handleSend() {
     const prompt = dom.input.value.trim();
     if (!prompt || state.isGenerating) return;
 
-    setLoading(true, "Architecting solution...");
+    setLoading(true, state.projectId ? "Refining project..." : "Architecting new project...");
     
     try {
+        // If we are in "New Project" mode (no projectId), create the project first
+        if (!state.projectId) {
+            // Generate a name from the prompt (first 3 words or so)
+            const name = prompt.split(' ').slice(0, 4).join(' ') + (prompt.split(' ').length > 4 ? '...' : '');
+            
+            const project = await room.collection('project').create({
+                name: name
+            });
+            
+            state.projectId = project.id;
+            state.projectName = project.name;
+            dom.currentProjectName.textContent = state.projectName;
+            
+            // Update URL
+            const url = new URL(window.location);
+            url.searchParams.set('project', state.projectId);
+            window.history.replaceState({}, '', url);
+            
+            // Set up subscription for this new project immediately
+            loadProject(state.projectId); 
+        }
+
         // Construct Context
         const currentFiles = getCurrentFiles();
         
@@ -148,9 +262,7 @@ async function handleSend() {
         const result = await generateProject(prompt, currentFiles);
         
         if (result) {
-            // Create Record in DB
-            // We do NOT update state.currentVersionIndex here manually.
-            // We let the realtime subscription handle the UI update when the data arrives.
+            // Create Version Record
             await room.collection('version').create({
                 project_id: state.projectId,
                 prompt: prompt,
@@ -162,7 +274,7 @@ async function handleSend() {
             dom.input.value = '';
             dom.input.style.height = 'auto';
             dom.welcomeScreen.classList.add('hidden');
-            showToast(`Version generated! Loading...`);
+            showToast(`Version generated!`);
         }
     } catch (error) {
         console.error(error);
@@ -175,11 +287,65 @@ async function handleSend() {
 
 function getCurrentFiles() {
     if (state.currentVersionIndex === -1) return null;
-    if (!state.versions[state.currentVersionIndex]) {
-        console.warn(`Version index ${state.currentVersionIndex} out of bounds (length: ${state.versions.length})`);
-        return null;
+    if (!state.versions || state.versions.length === 0) return null;
+    
+    // Safety clamp
+    if (state.currentVersionIndex >= state.versions.length) {
+        state.currentVersionIndex = state.versions.length - 1;
     }
+    
+    if (!state.versions[state.currentVersionIndex]) return null;
     return state.versions[state.currentVersionIndex].files;
+}
+
+// --- Project UI & Logic ---
+
+function toggleProjectMenu(forceState) {
+    if (typeof forceState === 'boolean') {
+        state.projectMenuOpen = forceState;
+    } else {
+        state.projectMenuOpen = !state.projectMenuOpen;
+    }
+    
+    const menu = dom.projectMenu;
+    const btn = dom.btnProjectLabel;
+    
+    if (state.projectMenuOpen) {
+        menu.classList.remove('opacity-0', 'pointer-events-none', 'translate-y-2');
+        menu.classList.add('opacity-100', 'pointer-events-auto', 'translate-y-0');
+        dom.projectSearch.focus();
+    } else {
+        menu.classList.add('opacity-0', 'pointer-events-none', 'translate-y-2');
+        menu.classList.remove('opacity-100', 'pointer-events-auto', 'translate-y-0');
+    }
+}
+
+function renderProjectList(filterText = '') {
+    const list = dom.projectList;
+    list.innerHTML = '';
+    
+    const filtered = state.projects.filter(p => 
+        p.name.toLowerCase().includes(filterText.toLowerCase())
+    );
+    
+    if (filtered.length === 0) {
+        list.innerHTML = '<div class="text-gray-500 text-xs text-center py-4">No projects found</div>';
+        return;
+    }
+    
+    filtered.forEach(p => {
+        const isActive = p.id === state.projectId;
+        const el = document.createElement('div');
+        el.className = `p-2 rounded-lg cursor-pointer flex justify-between items-center group transition-colors ${isActive ? 'bg-blue-900/30 text-blue-200' : 'hover:bg-gray-800 text-gray-300'}`;
+        el.innerHTML = `
+            <div class="truncate text-xs font-medium pr-2">${p.name}</div>
+            <div class="text-[10px] text-gray-500 font-mono opacity-0 group-hover:opacity-100 transition-opacity">
+                ${new Date(p.created_at).toLocaleDateString()}
+            </div>
+        `;
+        el.onclick = () => loadProject(p.id);
+        list.appendChild(el);
+    });
 }
 
 // --- AI Integration ---
@@ -243,19 +409,7 @@ USER PROMPT: ${prompt}
     }
 }
 
-async function generateRandomProject() {
-    const prompts = [
-        "A cyberpunk countdown timer for a rocket launch",
-        "A minimalist zen garden generator where you click to place rocks",
-        "A retro game store landing page with pixel art vibe",
-        "A weather dashboard that shows random weather for fictional cities",
-        "A digital pet rock that needs feeding and attention"
-    ];
-    const randomPrompt = prompts[Math.floor(Math.random() * prompts.length)];
-    dom.input.value = randomPrompt;
-    dom.input.dispatchEvent(new Event('input'));
-    handleSend();
-}
+// generateRandomProject removed/integrated into logic
 
 // --- Rendering ---
 
