@@ -15,6 +15,11 @@
     <div id="preview-container" class="absolute inset-0 z-0 bg-white transition-opacity duration-300">
         <iframe id="site-preview" class="w-full h-full border-0" sandbox="allow-scripts allow-modals allow-forms allow-popups"></iframe>
         
+        <!-- Project Loading State -->
+        <div id="project-loader" class="absolute inset-0 flex items-center justify-center bg-white z-20 hidden">
+             <div class="loader border-gray-200 border-b-blue-500"></div>
+        </div>
+
         <!-- Empty State / Welcome -->
         <div id="welcome-screen" class="absolute inset-0 flex flex-col items-center justify-center text-gray-800 bg-gray-50 p-6 text-center z-10">
             <div class="mb-8 p-4 bg-white rounded-2xl shadow-xl animate-float">
@@ -24,13 +29,13 @@
             </div>
             <div class="space-y-4 max-w-md w-full">
                 <p class="text-gray-600">Try saying...</p>
-                <button class="suggestion-chip w-full bg-white p-3 rounded-xl shadow-sm border border-gray-200 text-left hover:bg-gray-50 transition-colors text-sm text-gray-700" data-prompt="A personal portfolio for a photographer with a dark theme and masonry gallery">
+                <button type="button" class="suggestion-chip w-full bg-white p-3 rounded-xl shadow-sm border border-gray-200 text-left hover:bg-gray-50 transition-colors text-sm text-gray-700" data-prompt="A personal portfolio for a photographer with a dark theme and masonry gallery">
                     "A photographer's portfolio with dark mode"
                 </button>
-                <button class="suggestion-chip w-full bg-white p-3 rounded-xl shadow-sm border border-gray-200 text-left hover:bg-gray-50 transition-colors text-sm text-gray-700" data-prompt="A retro 80s synthwave landing page with neon text effects">
+                <button type="button" class="suggestion-chip w-full bg-white p-3 rounded-xl shadow-sm border border-gray-200 text-left hover:bg-gray-50 transition-colors text-sm text-gray-700" data-prompt="A retro 80s synthwave landing page with neon text effects">
                     "Retro 80s synthwave landing page"
                 </button>
-                <button class="suggestion-chip w-full bg-white p-3 rounded-xl shadow-sm border border-gray-200 text-left hover:bg-gray-50 transition-colors text-sm text-gray-700" data-prompt="A simple interactive calculator app with pastel colors">
+                <button type="button" class="suggestion-chip w-full bg-white p-3 rounded-xl shadow-sm border border-gray-200 text-left hover:bg-gray-50 transition-colors text-sm text-gray-700" data-prompt="A simple interactive calculator app with pastel colors">
                     "Pastel interactive calculator"
                 </button>
             </div>
@@ -56,7 +61,7 @@
                         <i class="fa-solid fa-code-branch text-blue-400 text-xs"></i>
                         <h2 class="text-xs font-semibold text-gray-300 uppercase tracking-wider">Project Timeline</h2>
                     </div>
-                    <button id="close-history" class="text-gray-500 hover:text-white transition-colors w-6 h-6 flex items-center justify-center rounded-full hover:bg-white/10"><i class="fa-solid fa-times text-xs"></i></button>
+                    <button type="button" id="close-history" class="text-gray-500 hover:text-white transition-colors w-6 h-6 flex items-center justify-center rounded-full hover:bg-white/10"><i class="fa-solid fa-times text-xs"></i></button>
                 </div>
                 <div id="history-list" class="overflow-y-auto p-2 space-y-2 flex-1 custom-scrollbar">
                     <!-- History items injected here -->
@@ -79,18 +84,18 @@
                 <!-- Utilities (Left) -->
                 <div class="flex flex-col gap-2 pb-1 pr-1">
                     <div class="flex items-center gap-2">
-                         <button id="btn-history" class="w-10 h-10 rounded-xl hover:bg-gray-700 text-gray-400 hover:text-white transition-colors flex items-center justify-center relative shrink-0">
+                         <button type="button" id="btn-history" class="w-10 h-10 rounded-xl hover:bg-gray-700 text-gray-400 hover:text-white transition-colors flex items-center justify-center relative shrink-0">
                             <i class="fa-solid fa-code-branch"></i>
                             <span id="version-badge" class="absolute top-1 right-1 w-2.5 h-2.5 bg-blue-500 rounded-full hidden"></span>
                         </button>
 
                         <div class="flex items-center bg-gray-900/60 rounded-xl border border-gray-700/50 p-1 h-10">
-                            <button id="btn-project-label" class="px-3 h-full flex items-center gap-2 text-xs font-medium text-gray-300 hover:text-white transition-colors max-w-[100px] sm:max-w-[140px] rounded hover:bg-white/5">
+                            <button type="button" id="btn-project-label" class="px-3 h-full flex items-center gap-2 text-xs font-medium text-gray-300 hover:text-white transition-colors max-w-[100px] sm:max-w-[140px] rounded hover:bg-white/5">
                                 <span id="current-project-name" class="truncate">New Project</span>
                                 <i class="fa-solid fa-chevron-down text-[10px] opacity-50"></i>
                             </button>
                             <div class="w-px h-4 bg-gray-700 mx-1"></div>
-                            <button id="btn-new-project" class="w-7 h-full flex items-center justify-center rounded hover:bg-white/10 text-gray-400 hover:text-white transition-colors" title="New Project">
+                            <button type="button" id="btn-new-project" class="w-7 h-full flex items-center justify-center rounded hover:bg-white/10 text-gray-400 hover:text-white transition-colors" title="New Project">
                                 <i class="fa-solid fa-plus text-xs"></i>
                             </button>
                         </div>
@@ -102,13 +107,13 @@
                     <textarea id="prompt-input" rows="1" placeholder="Describe your website..." class="w-full bg-transparent text-white placeholder-gray-500 text-sm p-3 pr-10 focus:outline-none resize-none overflow-hidden max-h-32 font-inter leading-relaxed"></textarea>
                     
                     <!-- Voice Input Button (Inside Input) -->
-                    <button id="btn-mic" class="absolute right-2 bottom-2 w-8 h-8 rounded-full hover:bg-gray-700 text-gray-400 hover:text-white flex items-center justify-center transition-colors">
+                    <button type="button" id="btn-mic" class="absolute right-2 bottom-2 w-8 h-8 rounded-full hover:bg-gray-700 text-gray-400 hover:text-white flex items-center justify-center transition-colors">
                         <i class="fa-solid fa-microphone"></i>
                     </button>
                 </div>
 
                 <!-- Action Button (Right) -->
-                <button id="btn-send" class="w-12 h-12 rounded-xl bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/20 flex items-center justify-center transition-all disabled:opacity-50 disabled:cursor-not-allowed pb-0.5">
+                <button type="button" id="btn-send" class="w-12 h-12 rounded-xl bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/20 flex items-center justify-center transition-all disabled:opacity-50 disabled:cursor-not-allowed pb-0.5">
                     <i class="fa-solid fa-paper-plane text-lg"></i>
                 </button>
             </div>

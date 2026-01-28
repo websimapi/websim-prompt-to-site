@@ -1,5 +1,3 @@
-import { escape } from 'https://esm.sh/lodash-es@4.17.21';
-
 // --- State Management ---
 // Websim Socket
 const room = new WebsimSocket();
@@ -43,6 +41,7 @@ async function init() {
         welcomeScreen: document.getElementById('welcome-screen'),
         loadingOverlay: document.getElementById('loading-overlay'),
         loadingText: document.getElementById('loading-text'),
+        projectLoader: document.getElementById('project-loader'),
         toast: document.getElementById('toast'),
         toastMsg: document.getElementById('toast-msg'),
         versionBadge: document.getElementById('version-badge'),
@@ -114,11 +113,13 @@ function setupEventListeners() {
 
     // Project Controls
     dom.btnProjectLabel.addEventListener('click', (e) => {
+        e.preventDefault();
         e.stopPropagation();
         toggleProjectMenu();
     });
     
-    dom.btnNewProject.addEventListener('click', () => {
+    dom.btnNewProject.addEventListener('click', (e) => {
+        e.preventDefault();
         resetToNewProject();
         showToast("Started new project");
     });
@@ -153,6 +154,7 @@ function resetToNewProject() {
     dom.currentProjectName.textContent = state.projectName;
     dom.welcomeScreen.classList.remove('hidden');
     dom.preview.srcdoc = ''; // Clear iframe
+    dom.projectLoader.classList.add('hidden');
     updateHistoryUI(); // Ensure history UI is cleared
     
     // Clean URL
@@ -166,16 +168,14 @@ function resetToNewProject() {
 }
 
 async function loadProject(id) {
+    if (!id) return;
     state.projectId = id;
     localStorage.setItem('last_project_id', id);
     
-    // Find name if possible (or fetch logic if we were using a dedicated fetch, but subscribe handles it)
+    // Find name if possible
     const p = state.projects.find(proj => proj.id === id);
     if (p) {
         state.projectName = p.name;
-    } else {
-        // Fallback or loading state name
-        // We might not have loaded projects yet, so we'll let the subscription update the name
     }
     dom.currentProjectName.textContent = state.projectName;
 
@@ -187,8 +187,12 @@ async function loadProject(id) {
     // Subscribe to versions
     if (state.versionUnsubscribe) state.versionUnsubscribe();
     
-    // Clear versions locally immediately to prevent bleeding from previous project
+    // Clear state and UI immediately to prevent bleeding from previous project
     state.versions = [];
+    state.currentVersionIndex = -1;
+    dom.preview.srcdoc = ''; // Clear iframe
+    dom.projectLoader.classList.remove('hidden'); // Show loading state
+    dom.welcomeScreen.classList.add('hidden');
     updateHistoryUI();
 
     state.versionUnsubscribe = room.collection('version').filter({ project_id: id }).subscribe((records) => {
@@ -204,16 +208,17 @@ async function loadProject(id) {
         }));
 
         state.versions = newVersions;
+        dom.projectLoader.classList.add('hidden'); // Hide loading state
 
         // Auto-switch to new version logic
-        if (wasAtTip && state.versions.length > 0) {
-            state.currentVersionIndex = state.versions.length - 1;
-            renderProject(getCurrentFiles());
-        } else if (state.currentVersionIndex === -1 && state.versions.length > 0) {
-             // Initial load
-             state.currentVersionIndex = state.versions.length - 1;
-             renderProject(getCurrentFiles());
-             dom.welcomeScreen.classList.add('hidden');
+        if (state.versions.length > 0) {
+            if (wasAtTip || state.currentVersionIndex === -1) {
+                state.currentVersionIndex = state.versions.length - 1;
+                renderProject(getCurrentFiles());
+            }
+        } else {
+             // No versions yet
+             dom.welcomeScreen.classList.remove('hidden');
         }
 
         updateHistoryUI();
@@ -347,7 +352,11 @@ function renderProjectList(filterText = '') {
                 ${new Date(p.created_at).toLocaleDateString()}
             </div>
         `;
-        el.onclick = () => loadProject(p.id);
+        el.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            loadProject(p.id);
+        });
         list.appendChild(el);
     });
 }
@@ -418,6 +427,10 @@ USER PROMPT: ${prompt}
 // --- Rendering ---
 
 function renderProject(files) {
+    if (!files || !Array.isArray(files)) {
+        return; // Safety exit
+    }
+
     const htmlFile = files.find(f => f.path === 'index.html');
     const cssFile = files.find(f => f.path === 'styles.css');
     const jsFile = files.find(f => f.path === 'script.js');
